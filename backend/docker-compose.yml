@@ -1,0 +1,170 @@
+version: "3.9"
+
+# ============================================================
+#  SentinelCore - Stack Completa
+#  Como usar:
+#    1. cp .env.example .env   (preencha as variaveis)
+#    2. docker compose up -d
+#    3. Acesse: http://localhost:8000/api/docs
+# ============================================================
+
+services:
+
+  # ---- Backend FastAPI ----
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentinelcore-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://sentinel:sentinel@postgres:5432/sentinelcore
+      - REDIS_URL=redis://redis:6379/0
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - sentinelcore
+
+  # ---- PostgreSQL + TimescaleDB ----
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: sentinelcore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinelcore
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinelcore"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinelcore
+
+  # ---- Redis ----
+  redis:
+    image: redis:7-alpine
+    container_name: sentinelcore-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinelcore
+
+  # ---- Ollama (LLM local) ----
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sentinelcore-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - sentinelcore
+    # GPU NVIDIA - descomente se tiver:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ---- Prometheus ----
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sentinelcore-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - sentinelcore
+
+  # ---- Prometheus Pushgateway ----
+  pushgateway:
+    image: prom/pushgateway:latest
+    container_name: sentinelcore-pushgateway
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    networks:
+      - sentinelcore
+
+  # ---- Grafana ----
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sentinelcore-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-sentinel123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - sentinelcore
+
+  # ---- n8n (automacao) ----
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: sentinelcore-n8n
+    restart: unless-stopped
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-sentinel123}
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-mude-esta-chave-em-producao-32ch}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "5678:5678"
+    networks:
+      - sentinelcore
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  grafana_data:
+  prometheus_data:
+  n8n_data:
+
+networks:
+  sentinelcore:
+    driver: bridge

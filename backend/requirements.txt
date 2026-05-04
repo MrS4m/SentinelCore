@@ -1,0 +1,29 @@
+# SentinelCore Backend - Dependencias
+# pip install -r requirements.txt
+
+# Web framework
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+
+# Banco de dados
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# Cache
+redis[hiredis]>=5.0.4
+
+# IA
+anthropic>=0.28.0
+aiohttp>=3.9.5
+
+# Notificacoes
+aiosmtplib>=3.0.1
+
+# Utilitarios
+python-dotenv>=1.0.1
+
+# RAG (opcional - instale separado se quiser)
+# chromadb>=0.5.0

@@ -1,0 +1,851 @@
+import { useState, useEffect, useRef } from "react";
+import {
+  AreaChart, Area, BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, RadialBarChart, RadialBar, PieChart, Pie, Cell
+} from "recharts";
+
+// ─── Paleta com suporte a tema claro/escuro ──────────────────────────
+const DARK = {
+  bg:       "#0f1117",
+  panel:    "#161b26",
+  panelAlt: "#0a0d14",
+  border:   "#1e2535",
+  wine:     "#7b2d3e",
+  wineL:    "#9e3a50",
+  navy:     "#1a3a6b",
+  navyL:    "#2251a3",
+  blue:     "#3b72c4",
+  blueL:    "#5a9de8",
+  teal:     "#2d8f8f",
+  pink:     "#c45a7a",
+  text:     "#e2e8f0",
+  textMid:  "#94a3b8",
+  textDim:  "#475569",
+  green:    "#22c55e",
+  amber:    "#f59e0b",
+  red:      "#ef4444",
+  critical: "#dc2626",
+  high:     "#ea580c",
+  medium:   "#ca8a04",
+  low:      "#16a34a",
+  sevBgs: { CRITICAL:"#3f0f0f", HIGH:"#3f1a08", MEDIUM:"#3f2d08", LOW:"#0f2f1a", INFO:"#1a1f2e" },
+};
+
+const LIGHT = {
+  bg:       "#f0f2f7",
+  panel:    "#ffffff",
+  panelAlt: "#e8eaf0",
+  border:   "#d1d8e8",
+  wine:     "#7b2d3e",
+  wineL:    "#9e3a50",
+  navy:     "#1a3a6b",
+  navyL:    "#2251a3",
+  blue:     "#3b72c4",
+  blueL:    "#2563a8",
+  teal:     "#0f766e",
+  pink:     "#be185d",
+  text:     "#0f172a",
+  textMid:  "#334155",
+  textDim:  "#64748b",
+  green:    "#16a34a",
+  amber:    "#d97706",
+  red:      "#dc2626",
+  critical: "#dc2626",
+  high:     "#c2410c",
+  medium:   "#a16207",
+  low:      "#15803d",
+  sevBgs: { CRITICAL:"#fee2e2", HIGH:"#ffedd5", MEDIUM:"#fef9c3", LOW:"#dcfce7", INFO:"#f1f5f9" },
+};
+
+// ─── Dados simulados (em produção viriam do backend) ─────────────────
+const generateLogs = () => {
+  const times = ["08:00","08:15","08:30","08:45","09:00","09:15","09:30","09:45","10:00","10:15","10:30","10:45","11:00","11:15","11:30"];
+  return times.map((t, i) => ({
+    time: t,
+    syslog: Math.floor(Math.random() * 80 + 20) * 1e6,
+    auth:   Math.floor(Math.random() * 30 + 5)  * 1e6,
+    kernel: Math.floor(Math.random() * 15 + 2)  * 1e6,
+  }));
+};
+
+const generateSources = (C) => [
+  { name:"fw-istanbul",      logs: Math.floor(Math.random()*90+10)*1000, color: C.wine },
+  { name:"hp-backbone",      logs: Math.floor(Math.random()*70+10)*1000, color: C.navy },
+  { name:"sep",              logs: Math.floor(Math.random()*50+10)*1000, color: C.blue },
+  { name:"openfire",         logs: Math.floor(Math.random()*40+5)*1000,  color: C.teal },
+  { name:"portaldb",         logs: Math.floor(Math.random()*35+5)*1000,  color: C.pink },
+  { name:"portal",           logs: Math.floor(Math.random()*30+5)*1000,  color: C.blueL },
+  { name:"cpanel",           logs: Math.floor(Math.random()*25+5)*1000,  color: C.wineL },
+  { name:"File Server",      logs: Math.floor(Math.random()*20+5)*1000,  color: C.navyL },
+];
+
+const generateCollectors = () => [
+  { name:"Dhcp-Istanbul",   val: Math.floor(Math.random()*12+3)*1e6 },
+  { name:"fw-istanbul",     val: Math.floor(Math.random()*10+2)*1e6 },
+  { name:"portaldb",        val: Math.floor(Math.random()*8+2)*1e6  },
+  { name:"FileServer",      val: Math.floor(Math.random()*7+1)*1e6  },
+  { name:"hp-backbone",     val: Math.floor(Math.random()*6+1)*1e6  },
+  { name:"sep",             val: Math.floor(Math.random()*5+1)*1e6  },
+  { name:"openfire",        val: Math.floor(Math.random()*4+1)*1e6  },
+  { name:"portal",          val: Math.floor(Math.random()*3+1)*1e6  },
+];
+
+const CVES = [
+  { id:"CVE-2024-3400", pkg:"PAN-OS",    score:10.0, sev:"CRITICAL", desc:"Command injection via GlobalProtect" },
+  { id:"CVE-2024-21762",pkg:"FortiOS",   score:9.6,  sev:"CRITICAL", desc:"Out-of-bounds write RCE" },
+  { id:"CVE-2024-1709", pkg:"ScreenConnect",score:10.0,sev:"CRITICAL",desc:"Auth bypass — access any client" },
+  { id:"CVE-2023-44487",pkg:"nghttp2",   score:7.5,  sev:"HIGH",     desc:"HTTP/2 Rapid Reset DoS" },
+  { id:"CVE-2024-6387", pkg:"OpenSSH",   score:8.1,  sev:"HIGH",     desc:"RegreSSHion — unauthenticated RCE" },
+  { id:"CVE-2024-4577", pkg:"PHP",       score:9.8,  sev:"CRITICAL", desc:"Argument injection — RCE on Windows" },
+  { id:"CVE-2023-46604",pkg:"ActiveMQ",  score:10.0, sev:"CRITICAL", desc:"RCE via ClassInfo wire format" },
+  { id:"CVE-2024-0519", pkg:"Chrome V8", score:8.8,  sev:"HIGH",     desc:"Out-of-bounds memory access" },
+];
+
+const RECENT_EVENTS = [
+  { time:"11:47:32", host:"srv-web-01",  ip:"185.234.219.4",  type:"BRUTE_FORCE",    sev:"HIGH",     msg:"54 failed SSH logins in 2 min" },
+  { time:"11:45:11", host:"db-prod-01",  ip:"10.0.1.45",      type:"CVE",            sev:"CRITICAL", msg:"CVE-2024-3400 — PAN-OS affected version detected" },
+  { time:"11:39:08", host:"fw-core",     ip:"203.0.113.99",   type:"PORT_SCAN",      sev:"MEDIUM",   msg:"SYN scan from external IP — 1430 ports probed" },
+  { time:"11:31:55", host:"ws-dev-03",   ip:"10.0.2.88",      type:"MALWARE",        sev:"CRITICAL", msg:"Suspicious process executing from /tmp/x8f2a1b" },
+  { time:"11:28:14", host:"srv-mail-02", ip:"91.189.91.4",    type:"SPAM",           sev:"LOW",      msg:"Outbound SMTP spike — 3,200 msgs/min" },
+  { time:"11:19:47", host:"srv-web-01",  ip:"185.220.101.32", type:"BRUTE_FORCE",    sev:"HIGH",     msg:"WordPress wp-admin attack — 320 attempts" },
+  { time:"11:12:03", host:"db-prod-01",  ip:"10.0.1.45",      type:"PRIV_ESCALATION",sev:"HIGH",     msg:"User 'deploy' added to sudoers group" },
+  { time:"10:58:31", host:"k8s-node-02", ip:"10.0.3.12",      type:"PORT_EXPOSURE",  sev:"MEDIUM",   msg:"Redis :6379 exposed on 0.0.0.0" },
+];
+
+const AGENTS = [
+  { name:"srv-web-01",   os:"Ubuntu 22.04", status:"online",  risk:82, ip:"10.0.1.10", cpu:43, mem:67, disk:55 },
+  { name:"db-prod-01",   os:"Debian 12",    status:"online",  risk:91, ip:"10.0.1.45", cpu:71, mem:82, disk:78 },
+  { name:"fw-core",      os:"Linux",        status:"online",  risk:35, ip:"10.0.0.1",  cpu:12, mem:28, disk:18 },
+  { name:"ws-dev-03",    os:"Windows 11",   status:"online",  risk:95, ip:"10.0.2.88", cpu:88, mem:74, disk:62 },
+  { name:"k8s-node-02",  os:"Ubuntu 22.04", status:"online",  risk:67, ip:"10.0.3.12", cpu:55, mem:61, disk:44 },
+  { name:"srv-mail-02",  os:"CentOS 9",     status:"offline", risk:48, ip:"10.0.1.22", cpu:0,  mem:0,  disk:71 },
+];
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+const fmt = (n) => {
+  if (n >= 1e9) return (n/1e9).toFixed(1)+"B";
+  if (n >= 1e6) return (n/1e6).toFixed(0)+"M";
+  if (n >= 1e3) return (n/1e3).toFixed(0)+"K";
+  return String(n);
+};
+
+const sevColor = (s, C) => ({
+  CRITICAL: C.critical, HIGH: C.high, MEDIUM: C.medium, LOW: C.low, INFO: C.textDim
+}[s] || C.textMid);
+
+const sevBg = (s, C) => C.sevBgs[s] || C.sevBgs.INFO;
+
+// ─── Subcomponentes ───────────────────────────────────────────────────
+
+function PanelHeader({ icon, title, sub, C }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+      <div style={{ width:28, height:28, borderRadius:"50%", background:`${C.wine}33`,
+                    border:`1.5px solid ${C.wine}`, display:"flex", alignItems:"center",
+                    justifyContent:"center", fontSize:13 }}>{icon}</div>
+      <div>
+        <div style={{ fontFamily:"'Barlow Condensed', sans-serif", fontWeight:600,
+                      fontSize:14, color:C.text, letterSpacing:.5 }}>{title}</div>
+        {sub && <div style={{ fontSize:10, color:C.textDim }}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub, color, C: theme }) {
+  const c = color || theme.blue;
+  return (
+    <div style={{ background:theme.panel, border:`1px solid ${theme.border}`, borderRadius:8,
+                  padding:"14px 16px", display:"flex", flexDirection:"column", gap:4,
+                  borderLeft:`3px solid ${c}` }}>
+      <div style={{ fontSize:11, color:theme.textDim, textTransform:"uppercase", letterSpacing:1 }}>{label}</div>
+      <div style={{ fontFamily:"'Barlow Condensed', sans-serif", fontSize:28, fontWeight:700,
+                    color:c, lineHeight:1 }}>{value}</div>
+      {sub && <div style={{ fontSize:11, color:theme.textMid }}>{sub}</div>}
+    </div>
+  );
+}
+
+function SeverityBadge({ sev, C }) {
+  return (
+    <span style={{ padding:"2px 8px", borderRadius:4, fontSize:10, fontWeight:700,
+                   background:sevBg(sev,C), color:sevColor(sev,C), letterSpacing:.5 }}>
+      {sev}
+    </span>
+  );
+}
+
+function GaugeEPS({ eps, maxEps, avgEps, C }) {
+  const pct = Math.min(eps / maxEps, 1);
+  const angle = -135 + pct * 270;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+      <svg width={110} height={80} viewBox="0 0 110 80">
+        <path d="M15 72 A45 45 0 0 1 95 72" fill="none" stroke={C.border} strokeWidth={10} strokeLinecap="round"/>
+        <path d="M15 72 A45 45 0 0 1 95 72" fill="none" stroke={C.wine} strokeWidth={10}
+              strokeLinecap="round" strokeDasharray={`${pct*141.4} 141.4`}/>
+        <g transform={`translate(55,72) rotate(${angle})`}>
+          <line x1={0} y1={0} x2={0} y2={-32} stroke={C.text} strokeWidth={2} strokeLinecap="round"/>
+          <circle cx={0} cy={0} r={4} fill={C.wine}/>
+        </g>
+        <text x={55} y={68} textAnchor="middle" fill={C.text}
+              style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:20, fontWeight:700 }}>
+          {eps}
+        </text>
+        <text x={55} y={78} textAnchor="middle" fill={C.textDim} style={{ fontSize:8 }}>EPS</text>
+      </svg>
+      <div style={{ display:"flex", gap:16, fontSize:11 }}>
+        <div style={{ color:C.textMid }}>
+          <span style={{ color:C.text, fontWeight:700 }}>{maxEps}</span> Max
+        </div>
+        <div style={{ color:C.textMid }}>
+          <span style={{ color:C.text, fontWeight:700 }}>{avgEps}</span> Avg
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background:"#1e2535", border:`1px solid ${C.border}`, borderRadius:6,
+                  padding:"8px 12px", fontSize:11 }}>
+      <div style={{ color:C.textMid, marginBottom:4 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ color:p.color, display:"flex", gap:8 }}>
+          <span>{p.name}:</span><span style={{ fontWeight:700 }}>{fmt(p.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ─── DASHBOARD PRINCIPAL ──────────────────────────────────────────────
+export default function SIEMDashboard() {
+  const [isDark,     setIsDark]     = useState(true);
+  const C = isDark ? DARK : LIGHT;
+  const [logs,       setLogs]       = useState(generateLogs);
+  const [sources,    setSources]    = useState(() => generateSources(DARK));
+  const [collectors, setCollectors] = useState(generateCollectors);
+  const [eps,        setEps]        = useState(293);
+  const [totalLogs,  setTotalLogs]  = useState(114268735);
+  const [activeAgent,setActiveAgent]= useState(AGENTS[0]);
+  const [now,        setNow]        = useState(new Date());
+  const [tab,        setTab]        = useState("overview"); // overview | cve | events | agents
+  const tickRef = useRef(0);
+
+  // Simula chegada de dados em tempo real
+  useEffect(() => {
+    const iv = setInterval(() => {
+      tickRef.current++;
+      setNow(new Date());
+      setEps(Math.floor(Math.random()*120+230));
+      setTotalLogs(n => n + Math.floor(Math.random()*5000+1000));
+
+      if (tickRef.current % 3 === 0) {
+        setLogs(prev => {
+          const next = [...prev.slice(1)];
+          const last = prev[prev.length-1];
+          const [h, m] = last.time.split(":").map(Number);
+          const nm = m + 15 >= 60 ? (m + 15 - 60) : m + 15;
+          const nh = m + 15 >= 60 ? h + 1 : h;
+          next.push({
+            time:   `${String(nh).padStart(2,"0")}:${String(nm).padStart(2,"0")}`,
+            syslog: Math.floor(Math.random()*80+20)*1e6,
+            auth:   Math.floor(Math.random()*30+5)*1e6,
+            kernel: Math.floor(Math.random()*15+2)*1e6,
+          });
+          return next;
+        });
+        setSources(generateSources(C));
+        setCollectors(generateCollectors);
+      }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const panel = (children, style={}) => (
+    <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:10,
+                  padding:16, ...style }}>
+      {children}
+    </div>
+  );
+
+  const tabs = [
+    { id:"overview", label:"📊 Overview"  },
+    { id:"cve",      label:"🛡️ CVE / Vuln" },
+    { id:"events",   label:"🔔 Eventos"    },
+    { id:"agents",   label:"💻 Agentes"    },
+  ];
+
+  return (
+    <div style={{ background:C.bg, minHeight:"100vh", padding:0,
+                  fontFamily:"'Barlow', sans-serif", color:C.text,
+                  fontSize:13, overflowX:"hidden" }}>
+
+      {/* Google Fonts */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800&display=swap');
+        ::-webkit-scrollbar { width:4px; height:4px; }
+        ::-webkit-scrollbar-track { background:${C.bg}; }
+        ::-webkit-scrollbar-thumb { background:${C.border}; border-radius:2px; }
+        * { box-sizing:border-box; margin:0; padding:0; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        @keyframes slideIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+        .live-dot { animation: pulse 1.5s infinite; }
+        .row-hover:hover { background:${C.border}33 !important; cursor:pointer; }
+      `}</style>
+
+      {/* ── TOP BAR ── */}
+      <div style={{ background:C.panelAlt, borderBottom:`1px solid ${C.border}`,
+                    padding:"10px 24px", display:"flex", alignItems:"center",
+                    justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <div style={{ width:32, height:32, borderRadius:8, background:C.wine,
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        fontSize:18 }}>🛡️</div>
+          <div>
+            <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:18,
+                          fontWeight:800, letterSpacing:1, color:C.text }}>
+              SENTINELCORE
+            </div>
+            <div style={{ fontSize:9, color:C.textDim, letterSpacing:2 }}>
+              SECURITY INFORMATION & EVENT MANAGEMENT
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display:"flex", gap:6 }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              style={{ padding:"6px 16px", borderRadius:6, border:"none", cursor:"pointer",
+                       fontSize:12, fontFamily:"'Barlow',sans-serif", fontWeight:600,
+                       background: tab===t.id ? C.wine : C.panel,
+                       color: tab===t.id ? "#fff" : C.textMid,
+                       transition:"all .2s" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", gap:16, fontSize:11 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div className="live-dot" style={{ width:7, height:7, borderRadius:"50%",
+                                              background:C.green }}/>
+            <span style={{ color:C.green, fontWeight:600 }}>LIVE</span>
+          </div>
+          <div style={{ color:C.textDim }}>{now.toLocaleTimeString()}</div>
+          <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:6,
+                        padding:"4px 10px", color:C.textMid }}>
+            🖥️ {activeAgent.name}
+          </div>
+          {/* ── Theme Toggle ── */}
+          <button
+            onClick={() => setIsDark(d => !d)}
+            title={isDark ? "Mudar para tema claro" : "Mudar para tema escuro"}
+            style={{ width:36, height:36, borderRadius:8, border:`1px solid ${C.border}`,
+                     background:C.panel, cursor:"pointer", fontSize:16,
+                     display:"flex", alignItems:"center", justifyContent:"center",
+                     transition:"all .2s", color:C.text }}>
+            {isDark ? "☀️" : "🌙"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ padding:"16px 24px" }}>
+
+        {/* ══════════ OVERVIEW TAB ══════════ */}
+        {tab === "overview" && (
+          <div style={{ animation:"slideIn .3s ease" }}>
+
+            {/* Row 1 — KPI Cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:10, marginBottom:14 }}>
+              <StatCard label="Total Logs" value={fmt(totalLogs)} sub="Desde meia-noite" color={C.wine} C={C}/>
+              <StatCard label="EPS Atual"  value={eps}            sub="Eventos/segundo"  color={C.blue} C={C}/>
+              <StatCard label="Agentes"    value="5/6"            sub="Online / Total"   color={C.green} C={C}/>
+              <StatCard label="Alertas 24h" value="47"            sub="12 críticos"      color={C.critical} C={C}/>
+              <StatCard label="CVEs Abertos" value="8"            sub="4 críticos"       color={C.high} C={C}/>
+              <StatCard label="Risk Score" value={activeAgent.risk} sub={activeAgent.name} color={activeAgent.risk>80?C.critical:activeAgent.risk>60?C.high:C.medium} C={C}/>
+            </div>
+
+            {/* Row 2 — Total Logs timeline | Collectors | Last Logs */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
+
+              {panel(<>
+                <PanelHeader icon="📈" title="Total Logs" sub={`syslog: ${fmt(totalLogs)}`} C={C}/>
+                <ResponsiveContainer width="100%" height={120}>
+                  <AreaChart data={logs} margin={{top:0,right:0,left:-20,bottom:0}}>
+                    <defs>
+                      <linearGradient id="gSys" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor={C.wine}  stopOpacity={.6}/>
+                        <stop offset="95%" stopColor={C.wine}  stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="gAuth" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor={C.blue}  stopOpacity={.5}/>
+                        <stop offset="95%" stopColor={C.blue}  stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                    <XAxis dataKey="time" tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false}/>
+                    <YAxis tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false} tickFormatter={fmt}/>
+                    <Tooltip content={<CustomTooltip/>}/>
+                    <Area type="monotone" dataKey="syslog" name="Syslog" stroke={C.wine}  fill="url(#gSys)"  strokeWidth={2}/>
+                    <Area type="monotone" dataKey="auth"   name="Auth"   stroke={C.blueL} fill="url(#gAuth)" strokeWidth={1.5}/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              </>)}
+
+              {panel(<>
+                <PanelHeader icon="📡" title="Collectors" C={C}/>
+                <ResponsiveContainer width="100%" height={120}>
+                  <BarChart data={collectors.slice(0,6)} margin={{top:0,right:0,left:-20,bottom:0}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                    <XAxis dataKey="name" tick={{fill:C.textDim,fontSize:8}} tickLine={false} axisLine={false}/>
+                    <YAxis tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false} tickFormatter={fmt}/>
+                    <Tooltip content={<CustomTooltip/>}/>
+                    <Bar dataKey="val" name="Logs" radius={[3,3,0,0]}>
+                      {collectors.slice(0,6).map((_, i) => (
+                        <Cell key={i} fill={[C.wine,C.navy,C.blue,C.teal,C.pink,C.wineL][i%6]}/>
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </>)}
+
+              {panel(<>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                  <PanelHeader icon="⏱️" title="Last Logs" C={C}/>
+                  <span style={{ fontSize:10, color:C.textDim, background:C.border,
+                                 padding:"2px 8px", borderRadius:4 }}>5 min</span>
+                </div>
+                <ResponsiveContainer width="100%" height={120}>
+                  <BarChart data={logs.slice(-10)} margin={{top:0,right:0,left:-20,bottom:0}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                    <XAxis dataKey="time" tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false}/>
+                    <YAxis tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false} tickFormatter={fmt}/>
+                    <Tooltip content={<CustomTooltip/>}/>
+                    <Bar dataKey="syslog" name="Syslog" fill={C.navyL} radius={[2,2,0,0]}/>
+                  </BarChart>
+                </ResponsiveContainer>
+              </>)}
+            </div>
+
+            {/* Row 3 — SysLogs gauge | Log Sources | Server Status */}
+            <div style={{ display:"grid", gridTemplateColumns:"220px 1fr 240px", gap:10, marginBottom:10 }}>
+
+              {panel(<>
+                <PanelHeader icon="⚡" title="SysLogs" C={C}/>
+                <GaugeEPS eps={eps} maxEps={485} avgEps={147} C={C}/>
+                <div style={{ marginTop:10, display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                  {[["Syslog", fmt(totalLogs), C.wine], ["Auth", "12.4M", C.blue],
+                    ["Kernel","3.2M", C.teal], ["App",   "8.1M", C.pink]].map(([l,v,c])=>(
+                    <div key={l} style={{ background:C.bg, borderRadius:6, padding:"6px 8px",
+                                          borderLeft:`2px solid ${c}` }}>
+                      <div style={{ fontSize:9, color:C.textDim }}>{l}</div>
+                      <div style={{ fontSize:13, fontWeight:700, color:c,
+                                    fontFamily:"'Barlow Condensed',sans-serif" }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </>)}
+
+              {panel(<>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                  <PanelHeader icon="🔗" title="Log Sources" C={C}/>
+                  <span style={{ fontSize:10, color:C.textDim, background:C.border,
+                                 padding:"2px 8px", borderRadius:4 }}>5 min</span>
+                </div>
+                <ResponsiveContainer width="100%" height={150}>
+                  <BarChart data={sources} margin={{top:0,right:0,left:-20,bottom:20}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                    <XAxis dataKey="name" tick={{fill:C.textDim,fontSize:9}} tickLine={false}
+                           axisLine={false} angle={-25} textAnchor="end"/>
+                    <YAxis tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false} tickFormatter={fmt}/>
+                    <Tooltip content={<CustomTooltip/>}/>
+                    <Bar dataKey="logs" name="Logs" radius={[3,3,0,0]}>
+                      {sources.map((s, i) => <Cell key={i} fill={s.color}/>)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                {/* Legend */}
+                <div style={{ display:"flex", flexWrap:"wrap", gap:"4px 12px", marginTop:4 }}>
+                  {sources.map(s => (
+                    <div key={s.name} style={{ display:"flex", alignItems:"center", gap:4, fontSize:9 }}>
+                      <div style={{ width:8, height:8, borderRadius:2, background:s.color }}/>
+                      <span style={{ color:C.textDim }}>{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </>)}
+
+              {panel(<>
+                <PanelHeader icon="🖥️" title="Server Status" sub={activeAgent.name} C={C}/>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+                              marginBottom:8 }}>
+                  <span style={{ fontSize:10, color:C.textDim }}></span>
+                  <span style={{ fontSize:10, fontWeight:700, color:C.green,
+                                 background:"#0f2f1a", padding:"2px 8px", borderRadius:4 }}>
+                    ● ACTIVE
+                  </span>
+                </div>
+                {[["Memory",activeAgent.mem,C.blue],["Disk",activeAgent.disk,C.teal],["CPU",activeAgent.cpu,C.wine]].map(([l,v,c])=>(
+                  <div key={l} style={{ marginBottom:10 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                      <span style={{ fontSize:11, color:C.textMid }}>{l} Used</span>
+                      <span style={{ fontSize:11, fontWeight:700, color:c }}>{v}%</span>
+                    </div>
+                    <div style={{ height:6, background:C.bg, borderRadius:3, overflow:"hidden" }}>
+                      <div style={{ width:`${v}%`, height:"100%", borderRadius:3,
+                                    background:`linear-gradient(90deg,${c}99,${c})`,
+                                    transition:"width .5s" }}/>
+                    </div>
+                  </div>
+                ))}
+                <div style={{ background:C.navy, borderRadius:8, padding:"10px 12px", marginTop:8 }}>
+                  <div style={{ fontFamily:"'Barlow Condensed',sans-serif",
+                                fontSize:22, fontWeight:800, color:"#fff" }}>
+                    {activeAgent.cpu}%
+                  </div>
+                  <div style={{ fontSize:11, color:"#93c5fd" }}>Current Server (CPU)</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:"#60a5fa", marginTop:2 }}>
+                    {activeAgent.ip}
+                  </div>
+                </div>
+              </>)}
+            </div>
+
+            {/* Row 4 — Total Logs trend + Recent Events mini */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 340px", gap:10 }}>
+              {panel(<>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}>
+                  <PanelHeader icon="📉" title="Total Logs — Trend" C={C}/>
+                  <div style={{ display:"flex", gap:4 }}>
+                    {["1D","7D","30D"].map((l,i)=>(
+                      <button key={l} style={{ padding:"3px 10px", borderRadius:4, border:"none",
+                                               background:i===0?C.wine:C.border,
+                                               color:i===0?"#fff":C.textMid, fontSize:10, cursor:"pointer" }}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={100}>
+                  <AreaChart data={logs} margin={{top:0,right:0,left:-20,bottom:0}}>
+                    <defs>
+                      <linearGradient id="gTrend" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor={C.pink} stopOpacity={.5}/>
+                        <stop offset="95%" stopColor={C.pink} stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                    <XAxis dataKey="time" tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false}/>
+                    <YAxis tick={{fill:C.textDim,fontSize:9}} tickLine={false} axisLine={false} tickFormatter={fmt}/>
+                    <Tooltip content={<CustomTooltip/>}/>
+                    <Area type="monotone" dataKey="syslog" name="Total" stroke={C.pink}
+                          fill="url(#gTrend)" strokeWidth={2} dot={{r:2,fill:C.pink}}/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              </>)}
+
+              {panel(<>
+                <PanelHeader icon="🔔" title="Eventos Recentes" sub="Últimas ocorrências" C={C}/>
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  {RECENT_EVENTS.slice(0,4).map((e,i)=>(
+                    <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start",
+                                          padding:"6px 8px", borderRadius:6, background:sevBg(e.sev,C) }}>
+                      <div style={{ fontSize:9, color:C.textDim, whiteSpace:"nowrap", paddingTop:2 }}>{e.time}</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:11, fontWeight:600, color:sevColor(e.sev,C) }}>{e.type}</div>
+                        <div style={{ fontSize:10, color:C.textMid }}>{e.msg.slice(0,45)}…</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>)}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════ CVE TAB ══════════ */}
+        {tab === "cve" && (
+          <div style={{ animation:"slideIn .3s ease" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+              <StatCard label="CVEs Críticos"  value="4" sub="CVSS ≥ 9.0"  color={C.critical} C={C}/>
+              <StatCard label="CVEs High"      value="3" sub="CVSS 7-8.9"  color={C.high} C={C}/>
+              <StatCard label="Pacotes Afetados" value="11" sub="Verificados" color={C.medium} C={C}/>
+              <StatCard label="Patches Disponíveis" value="7" sub="Prontos p/ aplicar" color={C.green} C={C}/>
+            </div>
+
+            {panel(<>
+              <PanelHeader icon="🛡️" title="Vulnerabilidades Detectadas" sub="Ordenado por CVSS Score" C={C}/>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                  <thead>
+                    <tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                      {["CVE ID","Pacote","CVSS","Severidade","Descrição","Ação"].map(h=>(
+                        <th key={h} style={{ padding:"8px 12px", textAlign:"left", color:C.textDim,
+                                             fontSize:10, fontWeight:600, textTransform:"uppercase",
+                                             letterSpacing:.5 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {CVES.map((c,i)=>(
+                      <tr key={i} className="row-hover"
+                          style={{ borderBottom:`1px solid ${C.border}11`, transition:"background .15s" }}>
+                        <td style={{ padding:"10px 12px", fontFamily:"monospace",
+                                     color:C.blueL, fontSize:11 }}>{c.id}</td>
+                        <td style={{ padding:"10px 12px", fontWeight:600, color:C.text }}>{c.pkg}</td>
+                        <td style={{ padding:"10px 12px" }}>
+                          <span style={{ fontFamily:"'Barlow Condensed',sans-serif",
+                                         fontSize:16, fontWeight:700,
+                                         color:c.score>=9?C.critical:c.score>=7?C.high:C.medium }}>
+                            {c.score.toFixed(1)}
+                          </span>
+                        </td>
+                        <td style={{ padding:"10px 12px" }}><SeverityBadge sev={c.sev} C={C}/></td>
+                        <td style={{ padding:"10px 12px", color:C.textMid, maxWidth:280,
+                                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {c.desc}
+                        </td>
+                        <td style={{ padding:"10px 12px" }}>
+                          <button style={{ padding:"4px 12px", borderRadius:4, border:"none",
+                                           background:C.wine, color:"#fff", fontSize:10,
+                                           cursor:"pointer", fontWeight:600 }}>
+                            Remediar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>)}
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:10 }}>
+              {panel(<>
+                <PanelHeader icon="📊" title="CVEs por Severidade" C={C}/>
+                <ResponsiveContainer width="100%" height={160}>
+                  <PieChart>
+                    <Pie data={[
+                      {name:"CRITICAL",value:4},{name:"HIGH",value:3},{name:"MEDIUM",value:1}
+                    ]} cx="50%" cy="50%" innerRadius={40} outerRadius={65}
+                        dataKey="value" paddingAngle={3}>
+                      <Cell fill={C.critical}/><Cell fill={C.high}/><Cell fill={C.medium}/>
+                    </Pie>
+                    <Tooltip/>
+                    <Legend iconType="circle" iconSize={10}
+                            formatter={(v)=><span style={{color:C.textMid,fontSize:11}}>{v}</span>}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </>)}
+
+              {panel(<>
+                <PanelHeader icon="📦" title="Top Pacotes Vulneráveis" C={C}/>
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart layout="vertical"
+                    data={CVES.slice(0,6).map(c=>({name:c.pkg,score:c.score}))}
+                    margin={{top:0,right:10,left:20,bottom:0}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} horizontal={false}/>
+                    <XAxis type="number" domain={[0,10]} tick={{fill:C.textDim,fontSize:9}}/>
+                    <YAxis type="category" dataKey="name" tick={{fill:C.textMid,fontSize:10}} width={80}/>
+                    <Tooltip content={<CustomTooltip/>}/>
+                    <Bar dataKey="score" name="CVSS" radius={[0,3,3,0]}>
+                      {CVES.slice(0,6).map((c,i)=>(
+                        <Cell key={i} fill={c.score>=9?C.critical:c.score>=7?C.high:C.medium}/>
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </>)}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════ EVENTS TAB ══════════ */}
+        {tab === "events" && (
+          <div style={{ animation:"slideIn .3s ease" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:14 }}>
+              {[["CRITICAL","4",C.critical],["HIGH","12",C.high],["MEDIUM","18",C.medium],
+                ["LOW","9",C.low],["AUTO-BLOCK","3",C.blue]].map(([l,v,c])=>(
+                <StatCard key={l} label={l} value={v} color={c} C={C}/>
+              ))}
+            </div>
+
+            {panel(<>
+              <PanelHeader icon="🔔" title="Feed de Eventos de Segurança" sub="Tempo real — atualiza a cada 2s" C={C}/>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                  <thead>
+                    <tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                      {["Horário","Host","IP Origem","Tipo","Severidade","Descrição","Status"].map(h=>(
+                        <th key={h} style={{ padding:"8px 12px", textAlign:"left", color:C.textDim,
+                                             fontSize:10, fontWeight:600, textTransform:"uppercase",
+                                             letterSpacing:.5 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RECENT_EVENTS.map((e,i)=>(
+                      <tr key={i} className="row-hover"
+                          style={{ borderBottom:`1px solid ${C.border}22`,
+                                   background: i===0 ? sevBg(e.sev,C) : "transparent",
+                                   transition:"background .15s" }}>
+                        <td style={{ padding:"10px 12px", fontFamily:"monospace",
+                                     color:C.textDim, fontSize:11 }}>{e.time}</td>
+                        <td style={{ padding:"10px 12px", color:C.blueL, fontWeight:600 }}>{e.host}</td>
+                        <td style={{ padding:"10px 12px", fontFamily:"monospace",
+                                     color:C.textMid, fontSize:11 }}>{e.ip}</td>
+                        <td style={{ padding:"10px 12px" }}>
+                          <span style={{ fontFamily:"'Barlow Condensed',sans-serif",
+                                         fontWeight:700, fontSize:12, color:C.text,
+                                         letterSpacing:.5 }}>{e.type}</span>
+                        </td>
+                        <td style={{ padding:"10px 12px" }}><SeverityBadge sev={e.sev} C={C}/></td>
+                        <td style={{ padding:"10px 12px", color:C.textMid, maxWidth:260,
+                                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {e.msg}
+                        </td>
+                        <td style={{ padding:"10px 12px" }}>
+                          {e.sev==="CRITICAL" ? (
+                            <span style={{ color:C.critical, fontSize:10, fontWeight:700 }}>🔴 OPEN</span>
+                          ) : e.sev==="HIGH" ? (
+                            <span style={{ color:C.high, fontSize:10, fontWeight:700 }}>🟠 OPEN</span>
+                          ) : (
+                            <span style={{ color:C.green, fontSize:10, fontWeight:700 }}>✅ ACK</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>)}
+          </div>
+        )}
+
+        {/* ══════════ AGENTS TAB ══════════ */}
+        {tab === "agents" && (
+          <div style={{ animation:"slideIn .3s ease" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"300px 1fr", gap:14 }}>
+
+              {/* Lista de agentes */}
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {AGENTS.map((a,i)=>(
+                  <div key={i} onClick={()=>setActiveAgent(a)}
+                       style={{ background: activeAgent.name===a.name ? `${C.wine}22` : C.panel,
+                                border:`1px solid ${activeAgent.name===a.name ? C.wine : C.border}`,
+                                borderRadius:8, padding:"12px 14px", cursor:"pointer",
+                                transition:"all .2s" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                      <span style={{ fontWeight:700, color:C.text }}>{a.name}</span>
+                      <span style={{ fontSize:10, fontWeight:700,
+                                     color: a.status==="online" ? C.green : C.critical,
+                                     background: a.status==="online" ? "#0f2f1a" : "#3f0f0f",
+                                     padding:"2px 8px", borderRadius:4 }}>
+                        {a.status==="online"?"● ONLINE":"● OFFLINE"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize:10, color:C.textDim, marginBottom:6 }}>
+                      {a.os} · {a.ip}
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{ flex:1, height:4, background:C.bg, borderRadius:2 }}>
+                        <div style={{ width:`${a.risk}%`, height:"100%", borderRadius:2,
+                                      background: a.risk>80?C.critical:a.risk>60?C.high:C.medium }}/>
+                      </div>
+                      <span style={{ fontSize:10, fontWeight:700,
+                                     color: a.risk>80?C.critical:a.risk>60?C.high:C.medium }}>
+                        {a.risk}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Detalhe do agente selecionado */}
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                {panel(<>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:22,
+                                    fontWeight:800, color:C.text }}>{activeAgent.name}</div>
+                      <div style={{ fontSize:11, color:C.textDim }}>
+                        {activeAgent.os} · {activeAgent.ip}
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button style={{ padding:"6px 14px", borderRadius:6, border:`1px solid ${C.wine}`,
+                                       background:"transparent", color:C.wine, fontSize:11,
+                                       cursor:"pointer", fontWeight:600 }}>
+                        🚫 Bloquear IP
+                      </button>
+                      <button style={{ padding:"6px 14px", borderRadius:6, border:`1px solid ${C.high}`,
+                                       background:"transparent", color:C.high, fontSize:11,
+                                       cursor:"pointer", fontWeight:600 }}>
+                        🔴 Isolar Host
+                      </button>
+                      <button style={{ padding:"6px 14px", borderRadius:6, border:"none",
+                                       background:C.wine, color:"#fff", fontSize:11,
+                                       cursor:"pointer", fontWeight:600 }}>
+                        🔍 Forense
+                      </button>
+                    </div>
+                  </div>
+                </>)}
+
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                  {[["CPU",activeAgent.cpu,C.wine],["Memória",activeAgent.mem,C.blue],["Disco",activeAgent.disk,C.teal]].map(([l,v,c])=>(
+                    <div key={l} style={{ background:C.panel, border:`1px solid ${C.border}`,
+                                          borderRadius:8, padding:"14px 16px" }}>
+                      <div style={{ fontSize:10, color:C.textDim, marginBottom:6 }}>{l}</div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif",
+                                    fontSize:32, fontWeight:800, color:c,
+                                    lineHeight:1, marginBottom:8 }}>{v}%</div>
+                      <div style={{ height:6, background:C.bg, borderRadius:3 }}>
+                        <div style={{ width:`${v}%`, height:"100%", borderRadius:3,
+                                      background:`linear-gradient(90deg,${c}99,${c})`,
+                                      transition:"width .6s" }}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {panel(<>
+                  <PanelHeader icon="🔔" title="Eventos deste Host" sub={activeAgent.name} C={C}/>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                    {RECENT_EVENTS.filter(e=>e.host===activeAgent.name).length === 0
+                      ? <div style={{ color:C.textDim, fontSize:12, padding:"12px 0" }}>
+                          Nenhum evento recente para este host.
+                        </div>
+                      : RECENT_EVENTS.filter(e=>e.host===activeAgent.name).map((e,i)=>(
+                        <div key={i} style={{ display:"flex", gap:10, alignItems:"center",
+                                              padding:"8px 12px", borderRadius:6,
+                                              background:sevBg(e.sev,C),
+                                              borderLeft:`3px solid ${sevColor(e.sev,C)}` }}>
+                          <div style={{ fontSize:10, color:C.textDim, whiteSpace:"nowrap" }}>{e.time}</div>
+                          <SeverityBadge sev={e.sev} C={C}/>
+                          <div style={{ flex:1, fontSize:11, color:C.textMid }}>{e.msg}</div>
+                          <div style={{ fontSize:10, color:sevColor(e.sev,C), fontWeight:700 }}>{e.type}</div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                </>)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ borderTop:`1px solid ${C.border}`, padding:"8px 24px",
+                    display:"flex", justifyContent:"space-between", alignItems:"center",
+                    fontSize:10, color:C.textDim, background:C.panelAlt }}>
+        <span>SentinelCore v1.0.0 — Security Information & Event Management</span>
+        <span>Total Logs: <strong style={{color:C.text}}>{fmt(totalLogs)}</strong> · EPS: <strong style={{color:C.wine}}>{eps}</strong></span>
+        <span>Agentes ativos: <strong style={{color:C.green}}>5</strong> / 6</span>
+      </div>
+    </div>
+  );
+}
